@@ -1,0 +1,8 @@
+Flask
+gunicorn
+databricks-sdk
+requests
+python-dotenv
+Flask-Cors
+certifi
+
