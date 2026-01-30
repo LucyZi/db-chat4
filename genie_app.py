@@ -65,10 +65,10 @@ HTML_TEMPLATE = """
                 <h2>Medicare Physician Services</h2>
                 <div class="sample-questions">
                     <div class="sample-question" onclick="askSample(this)">
-                        <span>Which providers have the highest submitted charges?</span>
+                        <span>Top 10 providers did RPM?</span>
                     </div>
                     <div class="sample-question" onclick="askSample(this)">
-                        <span>How many distinct services were provided by Dr. John Smith?</span>
+                        <span>Services by Scott Stringer?</span>
                     </div>
 
                 </div>
