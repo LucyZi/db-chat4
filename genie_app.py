@@ -239,6 +239,7 @@ def ask():
 
         if status == 'COMPLETED':
             text_parts = []
+            chart_generated = False # Flag to check if a chart was made
             
             for attachment in poll_data.get('attachments', []):
                 if 'text' in attachment:
@@ -258,31 +259,45 @@ def ask():
                         manifest = results_data.get('manifest', {})
                         result = results_data.get('result', {})
                         
-                        if manifest and result and len(manifest.get('schema', {}).get('columns', [])) == 2:
-                            columns = manifest['schema']['columns']
+                        # --- MODIFICATION START: More robust charting logic ---
+                        columns = manifest.get('schema', {}).get('columns', [])
+                        
+                        # New check: Allow 2 or more columns
+                        if manifest and result and len(columns) >= 2:
                             data_array = result.get('data_array', [])
                             
-                            col1_type = columns[0]['type_name'].lower()
-                            col2_type = columns[1]['type_name'].lower()
+                            # Identify label, data, and type columns
+                            label_cols = columns[:-1]
+                            data_col = columns[-1]
                             
-                            is_numeric = ('long' in col2_type or 'int' in col2_type or 'double' in col2_type or 'float' in col2_type or 'decimal' in col2_type)
+                            col1_type = columns[0]['type_name'].lower()
+                            data_col_type = data_col['type_name'].lower()
+                            
+                            is_numeric = ('long' in data_col_type or 'int' in data_col_type or 'double' in data_col_type or 'float' in data_col_type or 'decimal' in data_col_type)
                             is_time = ('date' in col1_type or 'timestamp' in col1_type)
                             is_string = ('string' in col1_type)
+                            
+                            # Chartable if the last column is numeric and the first is a string/date
                             is_chartable = (is_time or is_string) and is_numeric
 
                             if is_chartable and data_array:
-                                labels = [row[0] for row in data_array]
-                                try:
-                                    data_points = [float(row[1]) for row in data_array]
-                                except (ValueError, TypeError):
-                                    continue
+                                labels = []
+                                data_points = []
+                                for row in data_array:
+                                    try:
+                                        # Combine first n-1 columns for the label
+                                        label_parts = [str(item) for item in row[:-1] if item is not None]
+                                        labels.append(" ".join(label_parts))
+                                        data_points.append(float(row[-1]))
+                                    except (ValueError, TypeError):
+                                        continue # Skip rows with conversion errors
                                 
                                 chart_type = 'line' if is_time else 'bar'
 
                                 chart_data = {
                                     'labels': labels,
                                     'datasets': [{
-                                        'label': columns[1]['name'].replace('_', ' ').title(),
+                                        'label': data_col['name'].replace('_', ' ').title(),
                                         'data': data_points,
                                         'fill': False,
                                         'borderColor': '#6366f1',
@@ -291,30 +306,31 @@ def ask():
                                     }]
                                 }
                                 
-                                if text_parts:
-                                    base_response.update({
-                                        'type': 'chart_with_text',
-                                        'title': f"Trend of {chart_data['datasets'][0]['label']}",
-                                        'data': chart_data,
-                                        'content': "\\n\\n".join(text_parts),
-                                        'chart_type': chart_type
-                                    })
-                                    return jsonify(base_response)
-                                else:
-                                    base_response.update({
-                                        'type': 'chart',
-                                        'title': f"Trend of {chart_data['datasets'][0]['label']}",
-                                        'data': chart_data,
-                                        'chart_type': chart_type
-                                    })
-                                    return jsonify(base_response)
+                                response_type = 'chart_with_text' if text_parts else 'chart'
+                                base_response.update({
+                                    'type': response_type,
+                                    'title': f"Chart of {chart_data['datasets'][0]['label']}",
+                                    'data': chart_data,
+                                    'content': "\\n\\n".join(text_parts),
+                                    'chart_type': chart_type
+                                })
+                                chart_generated = True
+                                break # Exit loop once chart is generated
+                        # --- MODIFICATION END ---
 
-                        if result.get('data_array'):
+                        # Fallback to text table ONLY if no chart was generated
+                        if not chart_generated and result.get('data_array'):
                             cols = [col['name'] for col in manifest['schema']['columns']]
                             rows = [" | ".join(map(str, row)) for row in result['data_array']]
                             table_text = " | ".join(cols) + "\\n" + " | ".join(["---"] * len(cols)) + "\\n" + "\\n".join(rows)
                             text_parts.append(table_text)
-            
+                
+                if chart_generated:
+                    break
+
+            if chart_generated:
+                return jsonify(base_response)
+
             if text_parts:
                 base_response.update({'type': 'text', 'content': "\\n\\n".join(text_parts)})
                 return jsonify(base_response)
