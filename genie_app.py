@@ -11,7 +11,7 @@ DATABRICKS_HOST = os.getenv("DATABRICKS_HOST")
 GENIE_SPACE_ID = os.getenv("GENIE_SPACE_ID")
 DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN")
 
-# --- 完整的聊天机器人UI模板 (带全屏表格功能) ---
+# --- 完整的聊天机器人UI模板 (UI优化 & 逻辑增强) ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -51,9 +51,9 @@ HTML_TEMPLATE = """
         .chat-input-area textarea:focus { outline: none; border-color: var(--accent-color); }
         .chat-input-area button { border: none; background-color: var(--accent-color); color: white; padding: 0.75rem 1rem; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; height: fit-content; }
         
-        /* --- NEW: Styles for Table Container and Fullscreen Button --- */
-        .table-display-container { background-color: var(--bot-bg); border-radius: 18px; padding: 1rem; }
-        .fullscreen-btn { background-color: #eef2ff; color: var(--accent-color); border: 1px solid #c7d2fe; border-radius: 6px; padding: 4px 10px; font-size: 0.8rem; cursor: pointer; display: flex; align-items: center; gap: 6px; margin-bottom: 12px; }
+        /* --- MODIFIED: Reduced padding and margins for a tighter look --- */
+        .table-display-container { background-color: var(--bot-bg); border-radius: 18px; padding: 0.5rem 1rem 1rem 1rem; }
+        .fullscreen-btn { background-color: #eef2ff; color: var(--accent-color); border: 1px solid #c7d2fe; border-radius: 6px; padding: 4px 10px; font-size: 0.8rem; cursor: pointer; display: flex; align-items: center; gap: 6px; margin-bottom: 0.75rem; }
         .fullscreen-btn i { width: 14px; height: 14px; }
         .table-wrapper { max-height: 400px; overflow: auto; border: 1px solid var(--border-color); border-radius: 8px; }
         .data-table { border-collapse: collapse; width: 100%; font-family: 'Segoe UI', sans-serif; font-size: 0.9rem; background-color: white; }
@@ -61,7 +61,6 @@ HTML_TEMPLATE = """
         .data-table th { background-color: #f9fafb; font-weight: 600; position: sticky; top: 0; z-index: 1; }
         .data-table tr:last-child td { border-bottom: none; }
 
-        /* --- NEW: Styles for Fullscreen Modal --- */
         .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 1000; }
         .modal-content { background-color: white; padding: 2rem; border-radius: 12px; max-width: 95vw; max-height: 90vh; display: flex; flex-direction: column; position: relative; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
         .modal-close-btn { position: absolute; top: 10px; right: 15px; font-size: 2rem; line-height: 1; border: none; background: none; cursor: pointer; color: #9ca3af; }
@@ -83,7 +82,6 @@ HTML_TEMPLATE = """
         <div class="chat-input-area"><textarea id="userInput" placeholder="Ask your question..." rows="1" onkeydown="handleEnter(event)"></textarea><button id="sendButton" onclick="sendMessage()"><i data-lucide="send"></i></button></div>
     </div>
 
-    <!-- NEW: Hidden Fullscreen Modal Structure -->
     <div id="fullscreen-modal" class="modal-backdrop" onclick="closeFullscreen(event)">
         <div class="modal-content" onclick="event.stopPropagation()">
             <button class="modal-close-btn" onclick="closeFullscreen()">&times;</button>
@@ -116,25 +114,11 @@ HTML_TEMPLATE = """
 
         function addMessage(content, sender) { const messageElement = document.createElement('div'); messageElement.classList.add('message', `${sender}-message`); messageElement.innerText = content; chatMessages.appendChild(messageElement); chatMessages.scrollTop = chatMessages.scrollHeight; }
         
-        // --- MODIFIED: This function is now specifically for tables ---
         function addTableContent(html) {
             const messageElement = document.createElement('div');
             messageElement.classList.add('message', 'bot-message-html');
-            
-            // Create the container with the fullscreen button and the scrollable table wrapper
-            messageElement.innerHTML = `
-                <div class="table-display-container">
-                    <button class="fullscreen-btn" onclick="openFullscreen(this)">
-                        <i data-lucide="maximize"></i>
-                        <span>Fullscreen</span>
-                    </button>
-                    <div class="table-wrapper">
-                        ${html}
-                    </div>
-                </div>
-            `;
+            messageElement.innerHTML = `<div class="table-display-container"><button class="fullscreen-btn" onclick="openFullscreen(this)"><i data-lucide="maximize"></i><span>Fullscreen</span></button><div class="table-wrapper">${html}</div></div>`;
             chatMessages.appendChild(messageElement);
-            // Re-render icons since we just added a new one
             lucide.createIcons();
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
@@ -142,9 +126,7 @@ HTML_TEMPLATE = """
         function showTypingIndicator() { const indicator = document.createElement('div'); indicator.id = 'typing-indicator'; indicator.classList.add('typing-indicator'); indicator.innerHTML = '<span></span><span></span><span></span>'; chatMessages.appendChild(indicator); chatMessages.scrollTop = chatMessages.scrollHeight; }
         function removeTypingIndicator() { const indicator = document.getElementById('typing-indicator'); if (indicator) indicator.remove(); }
         
-        // --- NEW: Functions to handle the fullscreen modal ---
         function openFullscreen(buttonElement) {
-            // Find the table HTML within the same component as the button that was clicked
             const tableWrapper = buttonElement.nextElementSibling;
             if (tableWrapper) {
                 modalTableContainer.innerHTML = tableWrapper.innerHTML;
@@ -153,15 +135,11 @@ HTML_TEMPLATE = """
         }
 
         function closeFullscreen(event) {
-            // Only close if the click is on the backdrop itself, not the content
-            if (event && event.target !== fullscreenModal) {
-                return;
-            }
+            if (event && event.target !== fullscreenModal) { return; }
             fullscreenModal.style.display = 'none';
-            modalTableContainer.innerHTML = ''; // Clean up
+            modalTableContainer.innerHTML = '';
         }
         
-        // Add event listener for the Escape key to close the modal
         document.addEventListener('keydown', function(event) {
             if (event.key === 'Escape' && fullscreenModal.style.display === 'flex') {
                 closeFullscreen();
@@ -214,13 +192,15 @@ HTML_TEMPLATE = """
                 if (data.error) {
                     addMessage(`Error: ${data.details || data.error}`, 'bot');
                 } 
+                // --- MODIFIED: Added handling for the new 'text_and_table' type ---
                 else if (data.type === 'text_and_table_with_chart_data') {
                     if (data.content) addMessage(data.content, 'bot');
-                    if (data.table_html) {
-                        // --- MODIFIED: Use the new function for tables ---
-                        addTableContent(data.table_html);
-                    }
+                    if (data.table_html) addTableContent(data.table_html);
                     pendingChartData = { data: data.chart_data, title: data.title };
+                }
+                else if (data.type === 'text_and_table') {
+                    if (data.content) addMessage(data.content, 'bot');
+                    if (data.table_html) addTableContent(data.table_html);
                 }
                 else if (data.type === 'text' && data.content) {
                     addMessage(data.content, 'bot');
@@ -236,7 +216,7 @@ HTML_TEMPLATE = """
 </html>
 """
 
-# --- Python 后端部分 (无需修改) ---
+# --- Python 后端部分 (逻辑增强) ---
 app = Flask(__name__)
 
 def create_html_table(columns, data_array):
@@ -332,19 +312,22 @@ def ask():
                         columns = manifest.get('schema', {}).get('columns', [])
                         data_array = result.get('data_array', [])
 
-                        if len(columns) >= 2 and data_array:
-                            data_col = columns[-1]
-                            data_col_type = data_col['type_name'].lower()
-                            is_numeric = any(t in data_col_type for t in ['long', 'int', 'double', 'float', 'decimal'])
+                        if columns and data_array:
+                            table_html = create_html_table(columns, data_array)
                             
-                            if is_numeric:
-                                table_html = create_html_table(columns, data_array)
-                                labels = [" ".join(map(str, row[:-1])) for row in data_array]
-                                data_points = [float(row[-1]) for row in data_array]
-                                data_col_name = data_col['name'].replace('_', ' ').title()
-                                chart_title = f"Chart of {data_col_name}"
-                                chart_data = {'labels': labels, 'datasets': [{'label': data_col_name, 'data': data_points, 'borderColor': '#6366f1', 'backgroundColor': '#6366f1'}]}
+                            if len(columns) >= 2:
+                                data_col = columns[-1]
+                                data_col_type = data_col['type_name'].lower()
+                                is_numeric = any(t in data_col_type for t in ['long', 'int', 'double', 'float', 'decimal'])
+                                
+                                if is_numeric:
+                                    labels = [" ".join(map(str, row[:-1])) for row in data_array]
+                                    data_points = [float(row[-1]) for row in data_array]
+                                    data_col_name = data_col['name'].replace('_', ' ').title()
+                                    chart_title = f"Chart of {data_col_name}"
+                                    chart_data = {'labels': labels, 'datasets': [{'label': data_col_name, 'data': data_points, 'borderColor': '#6366f1', 'backgroundColor': '#6366f1'}]}
 
+            # --- MODIFIED: More robust logic for returning different response types ---
             if table_html and chart_data:
                 base_response.update({
                     'type': 'text_and_table_with_chart_data',
@@ -354,11 +337,16 @@ def ask():
                     'chart_data': chart_data,
                 })
                 return jsonify(base_response)
-            
+            elif table_html: # If there's a table but no chart data (e.g., all text)
+                base_response.update({
+                    'type': 'text_and_table',
+                    'content': "\n\n".join(text_parts),
+                    'table_html': table_html,
+                })
+                return jsonify(base_response)
             elif text_parts:
                 base_response.update({'type': 'text', 'content': "\n\n".join(text_parts)})
                 return jsonify(base_response)
-            
             else:
                 base_response.update({'type': 'text', 'content': "I've processed your request, but couldn't find a specific answer or data."})
                 return jsonify(base_response)
