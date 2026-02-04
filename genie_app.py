@@ -11,7 +11,7 @@ DATABRICKS_HOST = os.getenv("DATABRICKS_HOST")
 GENIE_SPACE_ID = os.getenv("GENIE_SPACE_ID")
 DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN")
 
-# --- 完整的聊天机器人UI模板 (支持上下文最终版) ---
+# --- 完整的聊天机器人UI模板 (智能交互最终版) ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -28,18 +28,19 @@ HTML_TEMPLATE = """
         .chat-header { padding: 1rem; border-bottom: 1px solid var(--border-color); font-weight: 600; font-size: 1.1rem; display: flex; justify-content: space-between; align-items: center; }
         .new-chat-btn { background: none; border: none; cursor: pointer; color: var(--placeholder-color); padding: 4px; border-radius: 6px; display: flex; align-items: center; justify-content: center; }
         .new-chat-btn:hover { background-color: var(--bot-bg); color: var(--text-color); }
-        .chat-messages { flex-grow: 1; overflow-y: auto; padding: 1.5rem; display: flex; flex-direction: column; }
+        .chat-messages { flex-grow: 1; overflow-y: auto; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem; }
         .welcome-screen { text-align: center; margin: auto; }
         .welcome-icon { width: 60px; height: 60px; background: linear-gradient(135deg, #a78bfa, #6366f1); border-radius: 12px; display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem; color: white; }
         .welcome-screen h2 { font-size: 1.5rem; margin-bottom: 0.5rem; }
         .sample-questions { margin-top: 2rem; display: flex; flex-direction: column; gap: 0.75rem; align-items: flex-start; margin-left: auto; margin-right: auto; max-width: 90%; }
         .sample-question { padding: 0.6rem 1rem; border: 1px solid var(--border-color); border-radius: 8px; cursor: pointer; transition: background-color 0.2s; font-size: 0.9rem; display: flex; align-items: center; gap: 0.5rem; text-align: left; }
         .sample-question:hover { background-color: #f9fafb; }
-        .message { max-width: 85%; padding: 0.75rem 1.25rem; border-radius: 18px; margin-bottom: 1rem; line-height: 1.5; white-space: pre-wrap; font-family: 'Menlo', 'Consolas', monospace; font-size: 0.9rem; }
+        .message { max-width: 85%; padding: 0.75rem 1.25rem; border-radius: 18px; line-height: 1.5; white-space: pre-wrap; font-family: 'Menlo', 'Consolas', monospace; font-size: 0.9rem; }
         .user-message { background-color: var(--accent-color); color: white; align-self: flex-end; border-bottom-right-radius: 4px; }
         .bot-message { background-color: var(--bot-bg); color: var(--text-color); align-self: flex-start; border-bottom-left-radius: 4px; }
+        .bot-message-html { padding: 0; background-color: var(--bot-bg); align-self: flex-start; max-width: 100%; width:100%; border-radius: 18px; }
         .chart-container-wrapper { align-self: flex-start; width: 100%; }
-        .chart-container { background-color: var(--bot-bg); padding: 1rem; border-radius: 18px; margin-bottom: 1rem; width: 100%; box-sizing: border-box; }
+        .chart-container { background-color: var(--bot-bg); padding: 1rem; border-radius: 18px; width: 100%; box-sizing: border-box; }
         .typing-indicator { align-self: flex-start; display: flex; gap: 4px; padding: 0.75rem 1.25rem; }
         .typing-indicator span { width: 8px; height: 8px; background-color: #ccc; border-radius: 50%; animation: bounce 1s infinite; }
         .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
@@ -49,35 +50,28 @@ HTML_TEMPLATE = """
         .chat-input-area textarea { flex-grow: 1; border: 1px solid var(--border-color); border-radius: 8px; padding: 0.75rem; font-size: 1rem; resize: none; font-family: inherit; max-height: 150px; overflow-y: auto; }
         .chat-input-area textarea:focus { outline: none; border-color: var(--accent-color); }
         .chat-input-area button { border: none; background-color: var(--accent-color); color: white; padding: 0.75rem 1rem; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; height: fit-content; }
+        .data-table { border-collapse: collapse; width: 100%; font-family: 'Segoe UI', sans-serif; font-size: 0.9rem; border-radius: 8px; overflow: hidden; }
+        .data-table th, .data-table td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border-color); }
+        .data-table th { background-color: #f9fafb; font-weight: 600; }
+        .data-table tr:last-child td { border-bottom: none; }
+        /* --- NEW: Style for the chart generation button --- */
+        .chart-prompt-button { align-self: flex-start; background-color: #eef2ff; color: var(--accent-color); border: 1px solid #e0e7ff; padding: 0.5rem 1rem; border-radius: 8px; cursor: pointer; font-family: 'Segoe UI', sans-serif; font-weight: 500; display: flex; align-items: center; gap: 0.5rem; margin-top: -0.5rem; }
+        .chart-prompt-button:hover { background-color: #e0e7ff; }
     </style>
 </head>
 <body>
     <div class="chat-container">
-        <div class="chat-header">
-            <span>Medicare Physician Services</span>
-            <button class="new-chat-btn" onclick="window.location.reload()" title="New Chat">
-                <i data-lucide="plus-circle"></i>
-            </button>
-        </div>
+        <div class="chat-header"><span>Medicare Physician Services</span><button class="new-chat-btn" onclick="window.location.reload()" title="New Chat"><i data-lucide="plus-circle"></i></button></div>
         <div class="chat-messages" id="chat-messages">
             <div class="welcome-screen" id="welcome-screen">
-                <div class="welcome-icon"><i data-lucide="bot"></i></div>
-                <h2>Medicare Physician Services</h2>
+                <div class="welcome-icon"><i data-lucide="bot"></i></div><h2>Medicare Physician Services</h2>
                 <div class="sample-questions">
-                    <div class="sample-question" onclick="askSample(this)">
-                        <span>Top 10 providers did RPM?</span>
-                    </div>
-                    <div class="sample-question" onclick="askSample(this)">
-                        <span>Services by Scott Stringer?</span>
-                    </div>
-
+                    <div class="sample-question" onclick="askSample(this)"><span>Top 10 providers did RPM?</span></div>
+                    <div class="sample-question" onclick="askSample(this)"><span>Services by Scott Stringer?</span></div>
                 </div>
             </div>
         </div>
-        <div class="chat-input-area">
-            <textarea id="userInput" placeholder="Ask your question..." rows="1" onkeydown="handleEnter(event)"></textarea>
-            <button id="sendButton" onclick="sendMessage()"><i data-lucide="send"></i></button>
-        </div>
+        <div class="chat-input-area"><textarea id="userInput" placeholder="Ask your question..." rows="1" onkeydown="handleEnter(event)"></textarea><button id="sendButton" onclick="sendMessage()"><i data-lucide="send"></i></button></div>
     </div>
 
     <script>
@@ -87,59 +81,40 @@ HTML_TEMPLATE = """
         const welcomeScreen = document.getElementById('welcome-screen');
 
         let currentConversationId = null;
+        // --- NEW: Temporary storage for pending chart data ---
+        let pendingChartData = null;
 
         userInput.addEventListener('input', function () { this.style.height = 'auto'; this.style.height = (this.scrollHeight) + 'px'; });
         function askSample(element) { const question = element.querySelector('span').innerText; userInput.value = question; userInput.dispatchEvent(new Event('input', { bubbles: true })); sendMessage(); }
         function handleEnter(event) { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage(); } }
         
         function renderChart(chartData, title, chartType) { 
-            const wrapper = document.createElement('div'); 
-            wrapper.classList.add('chart-container-wrapper'); 
-            const chartContainer = document.createElement('div'); 
-            chartContainer.classList.add('chart-container'); 
-            const canvas = document.createElement('canvas'); 
-            chartContainer.appendChild(canvas); 
-            wrapper.appendChild(chartContainer); 
-            chatMessages.appendChild(wrapper); 
-
-            new Chart(canvas, { 
-                type: chartType || 'line', 
-                data: chartData, 
-                options: { 
-                    responsive: true, 
-                    plugins: { 
-                        legend: { position: 'top' }, 
-                        title: { display: true, text: title } 
-                    }, 
-                    scales: { 
-                        y: { 
-                            beginAtZero: false, 
-                            ticks: { 
-                                callback: function(value) { 
-                                    if (Math.abs(value) >= 1e9) return (value / 1e9).toFixed(2) + 'B'; 
-                                    if (Math.abs(value) >= 1e6) return (value / 1e6).toFixed(2) + 'M'; 
-                                    if (Math.abs(value) >= 1e3) return (value / 1e3).toFixed(2) + 'K'; 
-                                    return value; 
-                                } 
-                            } 
-                        } 
-                    } 
-                } 
-            }); 
+            const wrapper = document.createElement('div'); wrapper.classList.add('chart-container-wrapper'); 
+            const chartContainer = document.createElement('div'); chartContainer.classList.add('chart-container'); 
+            const canvas = document.createElement('canvas'); chartContainer.appendChild(canvas); wrapper.appendChild(chartContainer); chatMessages.appendChild(wrapper); 
+            new Chart(canvas, { type: chartType || 'line', data: chartData, options: { responsive: true, plugins: { legend: { position: 'top' }, title: { display: true, text: title } }, scales: { y: { beginAtZero: false, ticks: { callback: function(value) { if (Math.abs(value) >= 1e6) return (value / 1e6).toFixed(2) + 'M'; if (Math.abs(value) >= 1e3) return (value / 1e3).toFixed(2) + 'K'; return value; } } } } } }); 
             chatMessages.scrollTop = chatMessages.scrollHeight; 
         }
 
         function addMessage(content, sender) { const messageElement = document.createElement('div'); messageElement.classList.add('message', `${sender}-message`); messageElement.innerText = content; chatMessages.appendChild(messageElement); chatMessages.scrollTop = chatMessages.scrollHeight; }
+        function addHtmlContent(html, sender) { const messageElement = document.createElement('div'); messageElement.classList.add('message', `${sender}-message-html`); messageElement.innerHTML = html; chatMessages.appendChild(messageElement); chatMessages.scrollTop = chatMessages.scrollHeight; }
         function showTypingIndicator() { const indicator = document.createElement('div'); indicator.id = 'typing-indicator'; indicator.classList.add('typing-indicator'); indicator.innerHTML = '<span></span><span></span><span></span>'; chatMessages.appendChild(indicator); chatMessages.scrollTop = chatMessages.scrollHeight; }
         function removeTypingIndicator() { const indicator = document.getElementById('typing-indicator'); if (indicator) indicator.remove(); }
+        
+        // --- NEW: Function to draw the chart on demand ---
+        function generatePendingChart(button) {
+            if (pendingChartData) {
+                renderChart(pendingChartData.data, pendingChartData.title, pendingChartData.type);
+                pendingChartData = null; // Clear after use
+                if (button) button.remove(); // Remove the button
+            }
+        }
 
         async function sendMessage() {
             const question = userInput.value.trim();
             if (!question) return;
-
-            if (welcomeScreen && welcomeScreen.style.display !== 'none') {
-                welcomeScreen.style.display = 'none';
-            }
+            pendingChartData = null; // Clear any old pending data on new question
+            if (welcomeScreen) welcomeScreen.style.display = 'none';
 
             addMessage(question, 'user');
             userInput.value = '';
@@ -150,27 +125,32 @@ HTML_TEMPLATE = """
                 const res = await fetch('/ask', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        question: question,
-                        conversation_id: currentConversationId
-                    })
+                    body: JSON.stringify({ question: question, conversation_id: currentConversationId })
                 });
                 const data = await res.json();
                 
                 removeTypingIndicator();
-
-                if (data.conversation_id) {
-                    currentConversationId = data.conversation_id;
-                }
+                if (data.conversation_id) currentConversationId = data.conversation_id;
 
                 if (data.error) {
                     addMessage(`Error: ${data.details || data.error}`, 'bot');
-                } else if (data.type === 'chart_with_text') {
-                    if (data.content) { addMessage(data.content, 'bot'); }
-                    renderChart(data.data, data.title, data.chart_type);
-                } else if (data.type === 'chart') {
-                    renderChart(data.data, data.title, data.chart_type);
-                } else if (data.type === 'text' && data.content) {
+                } 
+                // --- NEW: Logic for table with chart option ---
+                else if (data.type === 'table_with_chart_option') {
+                    if (data.content) addMessage(data.content, 'bot');
+                    if (data.table_html) addHtmlContent(data.table_html, 'bot');
+                    
+                    // Store chart data and add the prompt button
+                    pendingChartData = { data: data.chart_data, title: data.title, type: data.chart_type };
+                    const button = document.createElement('button');
+                    button.id = 'chart-prompt-btn';
+                    button.className = 'chart-prompt-button';
+                    button.innerHTML = '<i data-lucide="bar-chart-2" style="width:16px; height:16px;"></i> Generate Chart';
+                    button.onclick = () => generatePendingChart(button);
+                    chatMessages.appendChild(button);
+                    lucide.createIcons(); // Re-render icons
+                }
+                else if (data.type === 'text' && data.content) {
                     addMessage(data.content, 'bot');
                 }
 
@@ -187,6 +167,20 @@ HTML_TEMPLATE = """
 # --- Python 后端部分 ---
 app = Flask(__name__)
 
+def create_html_table(columns, data_array):
+    """Generates a styled HTML table string."""
+    html = "<table class='data-table'><thead><tr>"
+    for col in columns:
+        html += f"<th>{col['name'].replace('_', ' ').title()}</th>"
+    html += "</tr></thead><tbody>"
+    for row in data_array:
+        html += "<tr>"
+        for cell in row:
+            html += f"<td>{cell}</td>"
+        html += "</tr>"
+    html += "</tbody></table>"
+    return html
+
 @app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE)
@@ -194,7 +188,7 @@ def index():
 @app.route('/ask', methods=['POST'])
 def ask():
     if not all([DATABRICKS_HOST, GENIE_SPACE_ID, DATABRICKS_TOKEN]):
-        return jsonify({"error": "Server is not configured. Missing environment variables."}), 500
+        return jsonify({"error": "Server is not configured."}), 500
     
     user_question = request.json.get('question')
     conversation_id = request.json.get('conversation_id')
@@ -207,7 +201,6 @@ def ask():
         ssl_verify_path = certifi.where()
         
         message_id = None
-
         if not conversation_id:
             start_conv_url = f"{DATABRICKS_HOST}/api/2.0/genie/spaces/{GENIE_SPACE_ID}/start-conversation"
             start_payload = {'content': user_question}
@@ -239,15 +232,11 @@ def ask():
 
         if status == 'COMPLETED':
             text_parts = []
-            chart_generated = False # Flag to check if a chart was made
+            final_response_generated = False
             
             for attachment in poll_data.get('attachments', []):
                 if 'text' in attachment:
-                    content = attachment['text']
-                    if isinstance(content, str):
-                        text_parts.append(content)
-                    elif isinstance(content, dict) and 'content' in content:
-                        text_parts.append(content['content'])
+                    text_parts.append(attachment['text']['content'] if isinstance(attachment['text'], dict) else attachment['text'])
 
                 if 'query' in attachment and 'statement_id' in attachment['query']:
                     statement_id = attachment['query']['statement_id']
@@ -258,81 +247,40 @@ def ask():
                         results_data = results_response.json()
                         manifest = results_data.get('manifest', {})
                         result = results_data.get('result', {})
-                        
-                        # --- MODIFICATION START: More robust charting logic ---
                         columns = manifest.get('schema', {}).get('columns', [])
-                        
-                        # New check: Allow 2 or more columns
-                        if manifest and result and len(columns) >= 2:
-                            data_array = result.get('data_array', [])
-                            
-                            # Identify label, data, and type columns
-                            label_cols = columns[:-1]
+                        data_array = result.get('data_array', [])
+
+                        if len(columns) >= 2 and data_array:
                             data_col = columns[-1]
-                            
-                            col1_type = columns[0]['type_name'].lower()
                             data_col_type = data_col['type_name'].lower()
+                            is_numeric = any(t in data_col_type for t in ['long', 'int', 'double', 'float', 'decimal'])
                             
-                            is_numeric = ('long' in data_col_type or 'int' in data_col_type or 'double' in data_col_type or 'float' in data_col_type or 'decimal' in data_col_type)
-                            is_time = ('date' in col1_type or 'timestamp' in col1_type)
-                            is_string = ('string' in col1_type)
-                            
-                            # Chartable if the last column is numeric and the first is a string/date
-                            is_chartable = (is_time or is_string) and is_numeric
-
-                            if is_chartable and data_array:
-                                labels = []
-                                data_points = []
-                                for row in data_array:
-                                    try:
-                                        # Combine first n-1 columns for the label
-                                        label_parts = [str(item) for item in row[:-1] if item is not None]
-                                        labels.append(" ".join(label_parts))
-                                        data_points.append(float(row[-1]))
-                                    except (ValueError, TypeError):
-                                        continue # Skip rows with conversion errors
+                            if is_numeric:
+                                # --- MODIFICATION: Prepare data for both table and optional chart ---
+                                html_table = create_html_table(columns, data_array)
                                 
-                                chart_type = 'line' if is_time else 'bar'
-
-                                chart_data = {
-                                    'labels': labels,
-                                    'datasets': [{
-                                        'label': data_col['name'].replace('_', ' ').title(),
-                                        'data': data_points,
-                                        'fill': False,
-                                        'borderColor': '#6366f1',
-                                        'backgroundColor': '#6366f1',
-                                        'tension': 0.1
-                                    }]
-                                }
+                                labels = [" ".join(map(str, row[:-1])) for row in data_array]
+                                data_points = [float(row[-1]) for row in data_array]
                                 
-                                response_type = 'chart_with_text' if text_parts else 'chart'
+                                chart_type = 'line' if any(t in columns[0]['type_name'].lower() for t in ['date', 'timestamp']) else 'bar'
+                                chart_data = {'labels': labels, 'datasets': [{'label': data_col['name'].replace('_', ' ').title(), 'data': data_points}]}
+                                
                                 base_response.update({
-                                    'type': response_type,
+                                    'type': 'table_with_chart_option', # New response type
                                     'title': f"Chart of {chart_data['datasets'][0]['label']}",
-                                    'data': chart_data,
-                                    'content': "\\n\\n".join(text_parts),
+                                    'content': "\n\n".join(text_parts),
+                                    'table_html': html_table,
+                                    'chart_data': chart_data, # Send chart data to be stored by frontend
                                     'chart_type': chart_type
                                 })
-                                chart_generated = True
-                                break # Exit loop once chart is generated
-                        # --- MODIFICATION END ---
-
-                        # Fallback to text table ONLY if no chart was generated
-                        if not chart_generated and result.get('data_array'):
-                            cols = [col['name'] for col in manifest['schema']['columns']]
-                            rows = [" | ".join(map(str, row)) for row in result['data_array']]
-                            table_text = " | ".join(cols) + "\\n" + " | ".join(["---"] * len(cols)) + "\\n" + "\\n".join(rows)
-                            text_parts.append(table_text)
-                
-                if chart_generated:
-                    break
-
-            if chart_generated:
+                                final_response_generated = True
+                                break 
+            
+            if final_response_generated:
                 return jsonify(base_response)
 
             if text_parts:
-                base_response.update({'type': 'text', 'content': "\\n\\n".join(text_parts)})
+                base_response.update({'type': 'text', 'content': "\n\n".join(text_parts)})
                 return jsonify(base_response)
             else:
                 base_response.update({'type': 'text', 'content': "I've processed your request, but couldn't find a specific answer or data."})
