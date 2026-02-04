@@ -11,7 +11,7 @@ DATABRICKS_HOST = os.getenv("DATABRICKS_HOST")
 GENIE_SPACE_ID = os.getenv("GENIE_SPACE_ID")
 DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN")
 
-# --- 完整的聊天机器人UI模板 (完美交互最终版) ---
+# --- 完整的聊天机器人UI模板 (最终稳定版) ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -102,7 +102,6 @@ HTML_TEMPLATE = """
             const questionLower = question.toLowerCase();
             if (!question) return;
             
-            // --- NEW: Intercept command to draw a chart before sending to server ---
             if (pendingChartData) {
                 let requestedChartType = null;
                 if (questionLower.includes('bar') || questionLower.includes('histogram') || questionLower.includes('柱状图')) {
@@ -116,12 +115,12 @@ HTML_TEMPLATE = """
                     userInput.value = ''; userInput.style.height = 'auto';
                     addMessage("Of course. Here is the chart you requested:", 'bot');
                     renderChart(pendingChartData.data, pendingChartData.title, requestedChartType);
-                    pendingChartData = null; // Clear after use
-                    return; // Stop here, no need to call server
+                    pendingChartData = null;
+                    return;
                 }
             }
 
-            pendingChartData = null; // Clear any old pending data if a new, unrelated question is asked
+            pendingChartData = null;
             if (welcomeScreen) welcomeScreen.style.display = 'none';
 
             addMessage(question, 'user');
@@ -134,7 +133,15 @@ HTML_TEMPLATE = """
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ question: question, conversation_id: currentConversationId })
                 });
-                const data = await res.json();
+                
+                // This line is CRITICAL. We check if the response is ok before trying to parse it as JSON.
+                if (!res.ok) {
+                    // If we get a 500 error, the response text itself is the server's HTML error page.
+                    // We show a user-friendly message instead of trying to parse it.
+                    throw new Error(`Server responded with status: ${res.status}`);
+                }
+
+                const data = await res.json(); // Now this line is safe.
                 
                 removeTypingIndicator();
                 if (data.conversation_id) currentConversationId = data.conversation_id;
@@ -142,12 +149,9 @@ HTML_TEMPLATE = """
                 if (data.error) {
                     addMessage(`Error: ${data.details || data.error}`, 'bot');
                 } 
-                // --- NEW: Logic for text + table + hidden chart data ---
                 else if (data.type === 'text_and_table_with_chart_data') {
                     if (data.content) addMessage(data.content, 'bot');
                     if (data.table_html) addHtmlContent(data.table_html, 'bot');
-                    
-                    // Silently store chart data for potential follow-up
                     pendingChartData = { data: data.chart_data, title: data.title };
                 }
                 else if (data.type === 'text' && data.content) {
@@ -156,7 +160,8 @@ HTML_TEMPLATE = """
 
             } catch (error) {
                 removeTypingIndicator();
-                addMessage('An unexpected error occurred: ' + error, 'bot');
+                // Display a clean, generic error message for any kind of failure.
+                addMessage('An unexpected error occurred. Please check the server logs for details. Error: ' + error.message, 'bot');
             }
         }
     </script>
@@ -187,16 +192,22 @@ def index():
 
 @app.route('/ask', methods=['POST'])
 def ask():
-    if not all([DATABRICKS_HOST, GENIE_SPACE_ID, DATABRICKS_TOKEN]):
-        return jsonify({"error": "Server is not configured."}), 500
-    
-    user_question = request.json.get('question')
-    conversation_id = request.json.get('conversation_id')
-
-    if not user_question:
-        return jsonify({'error': 'Question cannot be empty'}), 400
-
+    # --- MODIFICATION START: The entire function is now wrapped in a try...except block ---
     try:
+        if not all([DATABRICKS_HOST, GENIE_SPACE_ID, DATABRICKS_TOKEN]):
+            return jsonify({"error": "Server is not configured. Missing environment variables."}), 500
+        
+        # This can fail if the request is not JSON, so it must be inside the try block.
+        request_data = request.get_json()
+        if not request_data:
+            return jsonify({'error': 'Invalid request: Missing or malformed JSON body.'}), 400
+
+        user_question = request_data.get('question')
+        conversation_id = request_data.get('conversation_id')
+
+        if not user_question:
+            return jsonify({'error': 'Question cannot be empty'}), 400
+
         headers = {'Authorization': f'Bearer {DATABRICKS_TOKEN}', 'Content-Type': 'application/json'}
         ssl_verify_path = certifi.where()
         
@@ -237,7 +248,6 @@ def ask():
             for attachment in poll_data.get('attachments', []):
                 if 'text' in attachment:
                     content = attachment['text']
-                    # Ensure we get the actual text content, handling different possible structures
                     if isinstance(content, str):
                         text_parts.append(content)
                     elif isinstance(content, dict) and 'content' in content:
@@ -262,10 +272,8 @@ def ask():
                             
                             if is_numeric:
                                 html_table = create_html_table(columns, data_array)
-                                
                                 labels = [" ".join(map(str, row[:-1])) for row in data_array]
                                 data_points = [float(row[-1]) for row in data_array]
-                                
                                 chart_data = {'labels': labels, 'datasets': [{'label': data_col['name'].replace('_', ' ').title(), 'data': data_points, 'borderColor': '#6366f1', 'backgroundColor': '#6366f1'}]}
                                 
                                 base_response.update({
@@ -281,7 +289,6 @@ def ask():
             if final_response_generated:
                 return jsonify(base_response)
 
-            # Fallback for responses that are text-only (no query results)
             if text_parts:
                 base_response.update({'type': 'text', 'content': "\n\n".join(text_parts)})
                 return jsonify(base_response)
@@ -292,8 +299,12 @@ def ask():
             return jsonify({'error': f'Failed to get answer. Final status: {status}', 'details': poll_data.get('error')}), 500
 
     except Exception as e:
+        # This is the crucial part. Any error, including getting the request JSON, will be caught here.
         error_details = traceback.format_exc()
-        return jsonify({'error': f'An unexpected server error occurred: {str(e)}', 'details': error_details}), 500
+        # It's good practice to log the full error on the server for debugging.
+        print(f"--- UNHANDLED EXCEPTION --- \n{error_details}")
+        return jsonify({'error': 'An unexpected server error occurred.', 'details': str(e)}), 500
+    # --- MODIFICATION END ---
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5001, debug=True)
