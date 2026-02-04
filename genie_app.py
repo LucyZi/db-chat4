@@ -11,7 +11,7 @@ DATABRICKS_HOST = os.getenv("DATABRICKS_HOST")
 GENIE_SPACE_ID = os.getenv("GENIE_SPACE_ID")
 DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN")
 
-# --- 完整的聊天机器人UI模板 (最终稳定版) ---
+# --- 完整的聊天机器人UI模板 (前端无需修改) ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -134,14 +134,11 @@ HTML_TEMPLATE = """
                     body: JSON.stringify({ question: question, conversation_id: currentConversationId })
                 });
                 
-                // This line is CRITICAL. We check if the response is ok before trying to parse it as JSON.
                 if (!res.ok) {
-                    // If we get a 500 error, the response text itself is the server's HTML error page.
-                    // We show a user-friendly message instead of trying to parse it.
                     throw new Error(`Server responded with status: ${res.status}`);
                 }
 
-                const data = await res.json(); // Now this line is safe.
+                const data = await res.json();
                 
                 removeTypingIndicator();
                 if (data.conversation_id) currentConversationId = data.conversation_id;
@@ -160,7 +157,6 @@ HTML_TEMPLATE = """
 
             } catch (error) {
                 removeTypingIndicator();
-                // Display a clean, generic error message for any kind of failure.
                 addMessage('An unexpected error occurred. Please check the server logs for details. Error: ' + error.message, 'bot');
             }
         }
@@ -169,7 +165,7 @@ HTML_TEMPLATE = """
 </html>
 """
 
-# --- Python 后端部分 ---
+# --- Python 后端部分 (已修复逻辑) ---
 app = Flask(__name__)
 
 def create_html_table(columns, data_array):
@@ -192,15 +188,13 @@ def index():
 
 @app.route('/ask', methods=['POST'])
 def ask():
-    # --- MODIFICATION START: The entire function is now wrapped in a try...except block ---
     try:
         if not all([DATABRICKS_HOST, GENIE_SPACE_ID, DATABRICKS_TOKEN]):
-            return jsonify({"error": "Server is not configured. Missing environment variables."}), 500
+            return jsonify({"error": "Server is not configured."}), 500
         
-        # This can fail if the request is not JSON, so it must be inside the try block.
         request_data = request.get_json()
         if not request_data:
-            return jsonify({'error': 'Invalid request: Missing or malformed JSON body.'}), 400
+            return jsonify({'error': 'Invalid request: Missing JSON body.'}), 400
 
         user_question = request_data.get('question')
         conversation_id = request_data.get('conversation_id')
@@ -212,6 +206,7 @@ def ask():
         ssl_verify_path = certifi.where()
         
         message_id = None
+        # ... (代码与之前相同，用于启动或继续对话) ...
         if not conversation_id:
             start_conv_url = f"{DATABRICKS_HOST}/api/2.0/genie/spaces/{GENIE_SPACE_ID}/start-conversation"
             start_payload = {'content': user_question}
@@ -242,12 +237,16 @@ def ask():
         base_response = {"conversation_id": conversation_id}
 
         if status == 'COMPLETED':
+            # --- MODIFICATION START: Revised logic ---
             text_parts = []
-            final_response_generated = False
-            
+            table_html = None
+            chart_data = None
+            chart_title = None
+
+            # Step 1: Loop through ALL attachments to gather all data first.
             for attachment in poll_data.get('attachments', []):
                 if 'text' in attachment:
-                    content = attachment['text']
+                    content = attachment.get('text', {})
                     if isinstance(content, str):
                         text_parts.append(content)
                     elif isinstance(content, dict) and 'content' in content:
@@ -271,40 +270,39 @@ def ask():
                             is_numeric = any(t in data_col_type for t in ['long', 'int', 'double', 'float', 'decimal'])
                             
                             if is_numeric:
-                                html_table = create_html_table(columns, data_array)
+                                table_html = create_html_table(columns, data_array)
                                 labels = [" ".join(map(str, row[:-1])) for row in data_array]
                                 data_points = [float(row[-1]) for row in data_array]
-                                chart_data = {'labels': labels, 'datasets': [{'label': data_col['name'].replace('_', ' ').title(), 'data': data_points, 'borderColor': '#6366f1', 'backgroundColor': '#6366f1'}]}
-                                
-                                base_response.update({
-                                    'type': 'text_and_table_with_chart_data',
-                                    'title': f"Chart of {chart_data['datasets'][0]['label']}",
-                                    'content': "\n\n".join(text_parts),
-                                    'table_html': html_table,
-                                    'chart_data': chart_data,
-                                })
-                                final_response_generated = True
-                                break 
-            
-            if final_response_generated:
-                return jsonify(base_response)
+                                data_col_name = data_col['name'].replace('_', ' ').title()
+                                chart_title = f"Chart of {data_col_name}"
+                                chart_data = {'labels': labels, 'datasets': [{'label': data_col_name, 'data': data_points, 'borderColor': '#6366f1', 'backgroundColor': '#6366f1'}]}
 
-            if text_parts:
+            # Step 2: After the loop, decide what to return based on what we found.
+            if table_html and chart_data:
+                base_response.update({
+                    'type': 'text_and_table_with_chart_data',
+                    'title': chart_title,
+                    'content': "\n\n".join(text_parts),
+                    'table_html': table_html,
+                    'chart_data': chart_data,
+                })
+                return jsonify(base_response)
+            
+            elif text_parts:
                 base_response.update({'type': 'text', 'content': "\n\n".join(text_parts)})
                 return jsonify(base_response)
+            
             else:
                 base_response.update({'type': 'text', 'content': "I've processed your request, but couldn't find a specific answer or data."})
                 return jsonify(base_response)
+            # --- MODIFICATION END ---
         else:
             return jsonify({'error': f'Failed to get answer. Final status: {status}', 'details': poll_data.get('error')}), 500
 
     except Exception as e:
-        # This is the crucial part. Any error, including getting the request JSON, will be caught here.
         error_details = traceback.format_exc()
-        # It's good practice to log the full error on the server for debugging.
         print(f"--- UNHANDLED EXCEPTION --- \n{error_details}")
         return jsonify({'error': 'An unexpected server error occurred.', 'details': str(e)}), 500
-    # --- MODIFICATION END ---
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5001, debug=True)
