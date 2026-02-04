@@ -11,7 +11,7 @@ DATABRICKS_HOST = os.getenv("DATABRICKS_HOST")
 GENIE_SPACE_ID = os.getenv("GENIE_SPACE_ID")
 DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN")
 
-# --- 完整的聊天机器人UI模板 (前端无需修改) ---
+# --- 完整的聊天机器人UI模板 (带全屏表格功能) ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -50,10 +50,22 @@ HTML_TEMPLATE = """
         .chat-input-area textarea { flex-grow: 1; border: 1px solid var(--border-color); border-radius: 8px; padding: 0.75rem; font-size: 1rem; resize: none; font-family: inherit; max-height: 150px; overflow-y: auto; }
         .chat-input-area textarea:focus { outline: none; border-color: var(--accent-color); }
         .chat-input-area button { border: none; background-color: var(--accent-color); color: white; padding: 0.75rem 1rem; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; height: fit-content; }
-        .data-table { border-collapse: collapse; width: 100%; font-family: 'Segoe UI', sans-serif; font-size: 0.9rem; border-radius: 8px; overflow: hidden; background-color: var(--bot-bg); }
+        
+        /* --- NEW: Styles for Table Container and Fullscreen Button --- */
+        .table-display-container { background-color: var(--bot-bg); border-radius: 18px; padding: 1rem; }
+        .fullscreen-btn { background-color: #eef2ff; color: var(--accent-color); border: 1px solid #c7d2fe; border-radius: 6px; padding: 4px 10px; font-size: 0.8rem; cursor: pointer; display: flex; align-items: center; gap: 6px; margin-bottom: 12px; }
+        .fullscreen-btn i { width: 14px; height: 14px; }
+        .table-wrapper { max-height: 400px; overflow: auto; border: 1px solid var(--border-color); border-radius: 8px; }
+        .data-table { border-collapse: collapse; width: 100%; font-family: 'Segoe UI', sans-serif; font-size: 0.9rem; background-color: white; }
         .data-table th, .data-table td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border-color); }
-        .data-table th { background-color: #f9fafb; font-weight: 600; }
+        .data-table th { background-color: #f9fafb; font-weight: 600; position: sticky; top: 0; z-index: 1; }
         .data-table tr:last-child td { border-bottom: none; }
+
+        /* --- NEW: Styles for Fullscreen Modal --- */
+        .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 1000; }
+        .modal-content { background-color: white; padding: 2rem; border-radius: 12px; max-width: 95vw; max-height: 90vh; display: flex; flex-direction: column; position: relative; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
+        .modal-close-btn { position: absolute; top: 10px; right: 15px; font-size: 2rem; line-height: 1; border: none; background: none; cursor: pointer; color: #9ca3af; }
+        #modal-table-container { overflow: auto; }
     </style>
 </head>
 <body>
@@ -71,11 +83,21 @@ HTML_TEMPLATE = """
         <div class="chat-input-area"><textarea id="userInput" placeholder="Ask your question..." rows="1" onkeydown="handleEnter(event)"></textarea><button id="sendButton" onclick="sendMessage()"><i data-lucide="send"></i></button></div>
     </div>
 
+    <!-- NEW: Hidden Fullscreen Modal Structure -->
+    <div id="fullscreen-modal" class="modal-backdrop" onclick="closeFullscreen(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <button class="modal-close-btn" onclick="closeFullscreen()">&times;</button>
+            <div id="modal-table-container"></div>
+        </div>
+    </div>
+
     <script>
         lucide.createIcons();
         const chatMessages = document.getElementById('chat-messages');
         const userInput = document.getElementById('userInput');
         const welcomeScreen = document.getElementById('welcome-screen');
+        const fullscreenModal = document.getElementById('fullscreen-modal');
+        const modalTableContainer = document.getElementById('modal-table-container');
 
         let currentConversationId = null;
         let pendingChartData = null;
@@ -93,10 +115,59 @@ HTML_TEMPLATE = """
         }
 
         function addMessage(content, sender) { const messageElement = document.createElement('div'); messageElement.classList.add('message', `${sender}-message`); messageElement.innerText = content; chatMessages.appendChild(messageElement); chatMessages.scrollTop = chatMessages.scrollHeight; }
-        function addHtmlContent(html, sender) { const messageElement = document.createElement('div'); messageElement.classList.add('message', `${sender}-message-html`); messageElement.innerHTML = html; chatMessages.appendChild(messageElement); chatMessages.scrollTop = chatMessages.scrollHeight; }
+        
+        // --- MODIFIED: This function is now specifically for tables ---
+        function addTableContent(html) {
+            const messageElement = document.createElement('div');
+            messageElement.classList.add('message', 'bot-message-html');
+            
+            // Create the container with the fullscreen button and the scrollable table wrapper
+            messageElement.innerHTML = `
+                <div class="table-display-container">
+                    <button class="fullscreen-btn" onclick="openFullscreen(this)">
+                        <i data-lucide="maximize"></i>
+                        <span>Fullscreen</span>
+                    </button>
+                    <div class="table-wrapper">
+                        ${html}
+                    </div>
+                </div>
+            `;
+            chatMessages.appendChild(messageElement);
+            // Re-render icons since we just added a new one
+            lucide.createIcons();
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
         function showTypingIndicator() { const indicator = document.createElement('div'); indicator.id = 'typing-indicator'; indicator.classList.add('typing-indicator'); indicator.innerHTML = '<span></span><span></span><span></span>'; chatMessages.appendChild(indicator); chatMessages.scrollTop = chatMessages.scrollHeight; }
         function removeTypingIndicator() { const indicator = document.getElementById('typing-indicator'); if (indicator) indicator.remove(); }
         
+        // --- NEW: Functions to handle the fullscreen modal ---
+        function openFullscreen(buttonElement) {
+            // Find the table HTML within the same component as the button that was clicked
+            const tableWrapper = buttonElement.nextElementSibling;
+            if (tableWrapper) {
+                modalTableContainer.innerHTML = tableWrapper.innerHTML;
+                fullscreenModal.style.display = 'flex';
+            }
+        }
+
+        function closeFullscreen(event) {
+            // Only close if the click is on the backdrop itself, not the content
+            if (event && event.target !== fullscreenModal) {
+                return;
+            }
+            fullscreenModal.style.display = 'none';
+            modalTableContainer.innerHTML = ''; // Clean up
+        }
+        
+        // Add event listener for the Escape key to close the modal
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape' && fullscreenModal.style.display === 'flex') {
+                closeFullscreen();
+            }
+        });
+
         async function sendMessage() {
             const question = userInput.value.trim();
             const questionLower = question.toLowerCase();
@@ -134,12 +205,9 @@ HTML_TEMPLATE = """
                     body: JSON.stringify({ question: question, conversation_id: currentConversationId })
                 });
                 
-                if (!res.ok) {
-                    throw new Error(`Server responded with status: ${res.status}`);
-                }
+                if (!res.ok) { throw new Error(`Server responded with status: ${res.status}`); }
 
                 const data = await res.json();
-                
                 removeTypingIndicator();
                 if (data.conversation_id) currentConversationId = data.conversation_id;
 
@@ -148,7 +216,10 @@ HTML_TEMPLATE = """
                 } 
                 else if (data.type === 'text_and_table_with_chart_data') {
                     if (data.content) addMessage(data.content, 'bot');
-                    if (data.table_html) addHtmlContent(data.table_html, 'bot');
+                    if (data.table_html) {
+                        // --- MODIFIED: Use the new function for tables ---
+                        addTableContent(data.table_html);
+                    }
                     pendingChartData = { data: data.chart_data, title: data.title };
                 }
                 else if (data.type === 'text' && data.content) {
@@ -165,7 +236,7 @@ HTML_TEMPLATE = """
 </html>
 """
 
-# --- Python 后端部分 (已修复逻辑) ---
+# --- Python 后端部分 (无需修改) ---
 app = Flask(__name__)
 
 def create_html_table(columns, data_array):
@@ -206,7 +277,6 @@ def ask():
         ssl_verify_path = certifi.where()
         
         message_id = None
-        # ... (代码与之前相同，用于启动或继续对话) ...
         if not conversation_id:
             start_conv_url = f"{DATABRICKS_HOST}/api/2.0/genie/spaces/{GENIE_SPACE_ID}/start-conversation"
             start_payload = {'content': user_question}
@@ -237,13 +307,11 @@ def ask():
         base_response = {"conversation_id": conversation_id}
 
         if status == 'COMPLETED':
-            # --- MODIFICATION START: Revised logic ---
             text_parts = []
             table_html = None
             chart_data = None
             chart_title = None
 
-            # Step 1: Loop through ALL attachments to gather all data first.
             for attachment in poll_data.get('attachments', []):
                 if 'text' in attachment:
                     content = attachment.get('text', {})
@@ -277,7 +345,6 @@ def ask():
                                 chart_title = f"Chart of {data_col_name}"
                                 chart_data = {'labels': labels, 'datasets': [{'label': data_col_name, 'data': data_points, 'borderColor': '#6366f1', 'backgroundColor': '#6366f1'}]}
 
-            # Step 2: After the loop, decide what to return based on what we found.
             if table_html and chart_data:
                 base_response.update({
                     'type': 'text_and_table_with_chart_data',
@@ -295,7 +362,6 @@ def ask():
             else:
                 base_response.update({'type': 'text', 'content': "I've processed your request, but couldn't find a specific answer or data."})
                 return jsonify(base_response)
-            # --- MODIFICATION END ---
         else:
             return jsonify({'error': f'Failed to get answer. Final status: {status}', 'details': poll_data.get('error')}), 500
 
