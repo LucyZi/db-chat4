@@ -11,7 +11,7 @@ DATABRICKS_HOST = os.getenv("DATABRICKS_HOST")
 GENIE_SPACE_ID = os.getenv("GENIE_SPACE_ID")
 DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN")
 
-# --- 完整的聊天机器人UI模板 (纯自然语言交互最终版) ---
+# --- 完整的聊天机器人UI模板 (完美交互最终版) ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -88,7 +88,7 @@ HTML_TEMPLATE = """
             const wrapper = document.createElement('div'); wrapper.classList.add('chart-container-wrapper'); 
             const chartContainer = document.createElement('div'); chartContainer.classList.add('chart-container'); 
             const canvas = document.createElement('canvas'); chartContainer.appendChild(canvas); wrapper.appendChild(chartContainer); chatMessages.appendChild(wrapper); 
-            new Chart(canvas, { type: chartType || 'line', data: chartData, options: { responsive: true, plugins: { legend: { position: 'top' }, title: { display: true, text: title } }, scales: { y: { beginAtZero: false, ticks: { callback: function(value) { if (Math.abs(value) >= 1e6) return (value / 1e6).toFixed(2) + 'M'; if (Math.abs(value) >= 1e3) return (value / 1e3).toFixed(2) + 'K'; return value; } } } } } }); 
+            new Chart(canvas, { type: chartType, data: chartData, options: { responsive: true, plugins: { legend: { position: 'top' }, title: { display: true, text: title } }, scales: { y: { beginAtZero: false, ticks: { callback: function(value) { if (Math.abs(value) >= 1e6) return (value / 1e6).toFixed(2) + 'M'; if (Math.abs(value) >= 1e3) return (value / 1e3).toFixed(2) + 'K'; return value; } } } } } }); 
             chatMessages.scrollTop = chatMessages.scrollHeight; 
         }
 
@@ -97,34 +97,35 @@ HTML_TEMPLATE = """
         function showTypingIndicator() { const indicator = document.createElement('div'); indicator.id = 'typing-indicator'; indicator.classList.add('typing-indicator'); indicator.innerHTML = '<span></span><span></span><span></span>'; chatMessages.appendChild(indicator); chatMessages.scrollTop = chatMessages.scrollHeight; }
         function removeTypingIndicator() { const indicator = document.getElementById('typing-indicator'); if (indicator) indicator.remove(); }
         
-        function generatePendingChart() {
-            if (pendingChartData) {
-                renderChart(pendingChartData.data, pendingChartData.title, pendingChartData.type);
-                pendingChartData = null; // Clear after use
-            }
-        }
-
         async function sendMessage() {
             const question = userInput.value.trim();
+            const questionLower = question.toLowerCase();
             if (!question) return;
             
-            // --- NEW: Check for chart generation command before sending to server ---
-            const positiveKeywords = ['yes', 'sure', 'ok', 'draw', 'chart', 'plot', '是的', '画', '图', '可以', '生成'];
-            if (pendingChartData && positiveKeywords.some(keyword => question.toLowerCase().includes(keyword))) {
-                addMessage(question, 'user');
-                userInput.value = '';
-                userInput.style.height = 'auto';
-                addMessage("Of course. Here is the chart:", 'bot');
-                generatePendingChart();
-                return; // Stop here, no need to call server
+            // --- NEW: Intercept command to draw a chart before sending to server ---
+            if (pendingChartData) {
+                let requestedChartType = null;
+                if (questionLower.includes('bar') || questionLower.includes('histogram') || questionLower.includes('柱状图')) {
+                    requestedChartType = 'bar';
+                } else if (questionLower.includes('line') || questionLower.includes('折线图')) {
+                    requestedChartType = 'line';
+                }
+
+                if (requestedChartType) {
+                    addMessage(question, 'user');
+                    userInput.value = ''; userInput.style.height = 'auto';
+                    addMessage("Of course. Here is the chart you requested:", 'bot');
+                    renderChart(pendingChartData.data, pendingChartData.title, requestedChartType);
+                    pendingChartData = null; // Clear after use
+                    return; // Stop here, no need to call server
+                }
             }
 
             pendingChartData = null; // Clear any old pending data if a new, unrelated question is asked
             if (welcomeScreen) welcomeScreen.style.display = 'none';
 
             addMessage(question, 'user');
-            userInput.value = '';
-            userInput.style.height = 'auto';
+            userInput.value = ''; userInput.style.height = 'auto';
             showTypingIndicator();
 
             try {
@@ -141,15 +142,13 @@ HTML_TEMPLATE = """
                 if (data.error) {
                     addMessage(`Error: ${data.details || data.error}`, 'bot');
                 } 
-                else if (data.type === 'table_with_chart_prompt') {
+                // --- NEW: Logic for text + table + hidden chart data ---
+                else if (data.type === 'text_and_table_with_chart_data') {
                     if (data.content) addMessage(data.content, 'bot');
                     if (data.table_html) addHtmlContent(data.table_html, 'bot');
                     
-                    // Store chart data and then show the text prompt
-                    pendingChartData = { data: data.chart_data, title: data.title, type: data.chart_type };
-                    if (data.chart_prompt) {
-                        addMessage(data.chart_prompt, 'bot');
-                    }
+                    // Silently store chart data for potential follow-up
+                    pendingChartData = { data: data.chart_data, title: data.title };
                 }
                 else if (data.type === 'text' && data.content) {
                     addMessage(data.content, 'bot');
@@ -176,14 +175,7 @@ def create_html_table(columns, data_array):
     for row in data_array:
         html += "<tr>"
         for i, cell in enumerate(row):
-            # Attempt to format numeric cells for better alignment/reading if needed
-            try:
-                if i == len(row) - 1: # Last column
-                    cell_val = f"{float(cell):,}"
-                else:
-                    cell_val = cell
-            except (ValueError, TypeError):
-                cell_val = cell
+            cell_val = cell if cell is not None else ""
             html += f"<td>{cell_val}</td>"
         html += "</tr>"
     html += "</tbody></table>"
@@ -244,7 +236,12 @@ def ask():
             
             for attachment in poll_data.get('attachments', []):
                 if 'text' in attachment:
-                    text_parts.append(attachment['text']['content'] if isinstance(attachment['text'], dict) else attachment['text'])
+                    content = attachment['text']
+                    # Ensure we get the actual text content, handling different possible structures
+                    if isinstance(content, str):
+                        text_parts.append(content)
+                    elif isinstance(content, dict) and 'content' in content:
+                        text_parts.append(content['content'])
 
                 if 'query' in attachment and 'statement_id' in attachment['query']:
                     statement_id = attachment['query']['statement_id']
@@ -269,16 +266,14 @@ def ask():
                                 labels = [" ".join(map(str, row[:-1])) for row in data_array]
                                 data_points = [float(row[-1]) for row in data_array]
                                 
-                                chart_type = 'line' if any(t in columns[0]['type_name'].lower() for t in ['date', 'timestamp']) else 'bar'
-                                chart_data = {'labels': labels, 'datasets': [{'label': data_col['name'].replace('_', ' ').title(), 'data': data_points}]}
+                                chart_data = {'labels': labels, 'datasets': [{'label': data_col['name'].replace('_', ' ').title(), 'data': data_points, 'borderColor': '#6366f1', 'backgroundColor': '#6366f1'}]}
                                 
                                 base_response.update({
-                                    'type': 'table_with_chart_prompt',
+                                    'type': 'text_and_table_with_chart_data',
                                     'title': f"Chart of {chart_data['datasets'][0]['label']}",
                                     'content': "\n\n".join(text_parts),
                                     'table_html': html_table,
                                     'chart_data': chart_data,
-                                    'chart_prompt': "I have summarized the data in the table above. Would you like me to generate a chart for it?"
                                 })
                                 final_response_generated = True
                                 break 
@@ -286,6 +281,7 @@ def ask():
             if final_response_generated:
                 return jsonify(base_response)
 
+            # Fallback for responses that are text-only (no query results)
             if text_parts:
                 base_response.update({'type': 'text', 'content': "\n\n".join(text_parts)})
                 return jsonify(base_response)
