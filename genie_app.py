@@ -86,13 +86,51 @@ HTML_TEMPLATE = """
         const userInput = document.getElementById('userInput');
         const welcomeScreen = document.getElementById('welcome-screen');
 
-        // 在 JS 中添加一个变量来保存对话ID
         let currentConversationId = null;
 
         userInput.addEventListener('input', function () { this.style.height = 'auto'; this.style.height = (this.scrollHeight) + 'px'; });
         function askSample(element) { const question = element.querySelector('span').innerText; userInput.value = question; userInput.dispatchEvent(new Event('input', { bubbles: true })); sendMessage(); }
         function handleEnter(event) { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage(); } }
-        function renderChart(chartData, title) { const wrapper = document.createElement('div'); wrapper.classList.add('chart-container-wrapper'); const chartContainer = document.createElement('div'); chartContainer.classList.add('chart-container'); const canvas = document.createElement('canvas'); chartContainer.appendChild(canvas); wrapper.appendChild(chartContainer); chatMessages.appendChild(wrapper); new Chart(canvas, { type: 'line', data: chartData, options: { responsive: true, plugins: { legend: { position: 'top' }, title: { display: true, text: title } }, scales: { y: { beginAtZero: false, ticks: { callback: function(value) { if (Math.abs(value) >= 1e9) return (value / 1e9).toFixed(2) + 'B'; if (Math.abs(value) >= 1e6) return (value / 1e6).toFixed(2) + 'M'; if (Math.abs(value) >= 1e3) return (value / 1e3).toFixed(2) + 'K'; return value; } } } } } }); chatMessages.scrollTop = chatMessages.scrollHeight; }
+        
+        // MODIFIED: Added chartType parameter
+        function renderChart(chartData, title, chartType) { 
+            const wrapper = document.createElement('div'); 
+            wrapper.classList.add('chart-container-wrapper'); 
+            const chartContainer = document.createElement('div'); 
+            chartContainer.classList.add('chart-container'); 
+            const canvas = document.createElement('canvas'); 
+            chartContainer.appendChild(canvas); 
+            wrapper.appendChild(chartContainer); 
+            chatMessages.appendChild(wrapper); 
+
+            // MODIFIED: Use dynamic chartType, default to 'line'
+            new Chart(canvas, { 
+                type: chartType || 'line', 
+                data: chartData, 
+                options: { 
+                    responsive: true, 
+                    plugins: { 
+                        legend: { position: 'top' }, 
+                        title: { display: true, text: title } 
+                    }, 
+                    scales: { 
+                        y: { 
+                            beginAtZero: false, 
+                            ticks: { 
+                                callback: function(value) { 
+                                    if (Math.abs(value) >= 1e9) return (value / 1e9).toFixed(2) + 'B'; 
+                                    if (Math.abs(value) >= 1e6) return (value / 1e6).toFixed(2) + 'M'; 
+                                    if (Math.abs(value) >= 1e3) return (value / 1e3).toFixed(2) + 'K'; 
+                                    return value; 
+                                } 
+                            } 
+                        } 
+                    } 
+                } 
+            }); 
+            chatMessages.scrollTop = chatMessages.scrollHeight; 
+        }
+
         function addMessage(content, sender) { const messageElement = document.createElement('div'); messageElement.classList.add('message', `${sender}-message`); messageElement.innerText = content; chatMessages.appendChild(messageElement); chatMessages.scrollTop = chatMessages.scrollHeight; }
         function showTypingIndicator() { const indicator = document.createElement('div'); indicator.id = 'typing-indicator'; indicator.classList.add('typing-indicator'); indicator.innerHTML = '<span></span><span></span><span></span>'; chatMessages.appendChild(indicator); chatMessages.scrollTop = chatMessages.scrollHeight; }
         function removeTypingIndicator() { const indicator = document.getElementById('typing-indicator'); if (indicator) indicator.remove(); }
@@ -111,20 +149,18 @@ HTML_TEMPLATE = """
             showTypingIndicator();
 
             try {
-                // 发送请求时，带上已保存的 conversation_id
                 const res = await fetch('/ask', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
                         question: question,
-                        conversation_id: currentConversationId // 第一次发送时为 null
+                        conversation_id: currentConversationId
                     })
                 });
                 const data = await res.json();
                 
                 removeTypingIndicator();
 
-                // 从后端响应中获取并保存 conversation_id
                 if (data.conversation_id) {
                     currentConversationId = data.conversation_id;
                 }
@@ -133,9 +169,11 @@ HTML_TEMPLATE = """
                     addMessage(`Error: ${data.details || data.error}`, 'bot');
                 } else if (data.type === 'chart_with_text') {
                     if (data.content) { addMessage(data.content, 'bot'); }
-                    renderChart(data.data, data.title);
+                    // MODIFIED: Pass chart_type to renderChart
+                    renderChart(data.data, data.title, data.chart_type);
                 } else if (data.type === 'chart') {
-                    renderChart(data.data, data.title);
+                    // MODIFIED: Pass chart_type to renderChart
+                    renderChart(data.data, data.title, data.chart_type);
                 } else if (data.type === 'text' && data.content) {
                     addMessage(data.content, 'bot');
                 }
@@ -162,9 +200,8 @@ def ask():
     if not all([DATABRICKS_HOST, GENIE_SPACE_ID, DATABRICKS_TOKEN]):
         return jsonify({"error": "Server is not configured. Missing environment variables."}), 500
     
-    # 从前端获取 conversation_id
     user_question = request.json.get('question')
-    conversation_id = request.json.get('conversation_id') # 可能是 None
+    conversation_id = request.json.get('conversation_id')
 
     if not user_question:
         return jsonify({'error': 'Question cannot be empty'}), 400
@@ -175,9 +212,7 @@ def ask():
         
         message_id = None
 
-        # 判断是新对话还是追问
         if not conversation_id:
-            # 开始新对话
             start_conv_url = f"{DATABRICKS_HOST}/api/2.0/genie/spaces/{GENIE_SPACE_ID}/start-conversation"
             start_payload = {'content': user_question}
             start_response = requests.post(start_conv_url, headers=headers, json=start_payload, verify=ssl_verify_path)
@@ -186,7 +221,6 @@ def ask():
             conversation_id = start_data['conversation']['id']
             message_id = start_data['message']['id']
         else:
-            # 在现有对话中添加新消息
             add_message_url = f"{DATABRICKS_HOST}/api/2.0/genie/spaces/{GENIE_SPACE_ID}/conversations/{conversation_id}/messages"
             add_payload = {'content': user_question}
             add_response = requests.post(add_message_url, headers=headers, json=add_payload, verify=ssl_verify_path)
@@ -194,7 +228,6 @@ def ask():
             add_data = add_response.json()
             message_id = add_data['id']
 
-        # 后续的轮询逻辑
         message_url = f"{DATABRICKS_HOST}/api/2.0/genie/spaces/{GENIE_SPACE_ID}/conversations/{conversation_id}/messages/{message_id}"
         status = ""
         poll_data = {}
@@ -206,7 +239,6 @@ def ask():
             poll_data = poll_response.json()
             status = poll_data.get('status')
         
-        # 在返回的 JSON 中始终包含 conversation_id
         base_response = {"conversation_id": conversation_id}
 
         if status == 'COMPLETED':
@@ -236,17 +268,22 @@ def ask():
                             
                             col1_type = columns[0]['type_name'].lower()
                             col2_type = columns[1]['type_name'].lower()
-                            is_chartable = (
-                                ('date' in col1_type or 'string' in col1_type) and
-                                ('long' in col2_type or 'int' in col2_type or 'double' in col2_type or 'float' in col2_type or 'decimal' in col2_type)
-                            )
+                            
+                            # MODIFIED: Step 1 - Detect column type
+                            is_numeric = ('long' in col2_type or 'int' in col2_type or 'double' in col2_type or 'float' in col2_type or 'decimal' in col2_type)
+                            is_time = ('date' in col1_type or 'timestamp' in col1_type)
+                            is_string = ('string' in col1_type)
+                            is_chartable = (is_time or is_string) and is_numeric
 
                             if is_chartable and data_array:
                                 labels = [row[0] for row in data_array]
                                 try:
                                     data_points = [float(row[1]) for row in data_array]
                                 except (ValueError, TypeError):
-                                    continue 
+                                    continue
+                                
+                                # MODIFIED: Step 2 - Pick chart type
+                                chart_type = 'line' if is_time else 'bar'
 
                                 chart_data = {
                                     'labels': labels,
@@ -255,34 +292,38 @@ def ask():
                                         'data': data_points,
                                         'fill': False,
                                         'borderColor': '#6366f1',
+                                        'backgroundColor': '#6366f1', # Added for bar charts
                                         'tension': 0.1
                                     }]
                                 }
                                 
+                                # MODIFIED: Step 3 - Send chart_type to frontend
                                 if text_parts:
                                     base_response.update({
                                         'type': 'chart_with_text',
                                         'title': f"Trend of {chart_data['datasets'][0]['label']}",
                                         'data': chart_data,
-                                        'content': "\n\n".join(text_parts)
+                                        'content': "\\n\\n".join(text_parts),
+                                        'chart_type': chart_type
                                     })
                                     return jsonify(base_response)
                                 else:
                                     base_response.update({
                                         'type': 'chart',
                                         'title': f"Trend of {chart_data['datasets'][0]['label']}",
-                                        'data': chart_data
+                                        'data': chart_data,
+                                        'chart_type': chart_type
                                     })
                                     return jsonify(base_response)
 
                         if result.get('data_array'):
                             cols = [col['name'] for col in manifest['schema']['columns']]
                             rows = [" | ".join(map(str, row)) for row in result['data_array']]
-                            table_text = " | ".join(cols) + "\n" + " | ".join(["---"] * len(cols)) + "\n" + "\n".join(rows)
+                            table_text = " | ".join(cols) + "\\n" + " | ".join(["---"] * len(cols)) + "\\n" + "\\n".join(rows)
                             text_parts.append(table_text)
             
             if text_parts:
-                base_response.update({'type': 'text', 'content': "\n\n".join(text_parts)})
+                base_response.update({'type': 'text', 'content': "\\n\\n".join(text_parts)})
                 return jsonify(base_response)
             else:
                 base_response.update({'type': 'text', 'content': "I've processed your request, but couldn't find a specific answer or data."})
@@ -296,3 +337,4 @@ def ask():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5001, debug=True)
+```
