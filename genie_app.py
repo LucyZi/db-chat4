@@ -11,7 +11,7 @@ DATABRICKS_HOST = os.getenv("DATABRICKS_HOST")
 GENIE_SPACE_ID = os.getenv("GENIE_SPACE_ID")
 DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN")
 
-# --- 完整的聊天机器人UI模板 (智能交互最终版) ---
+# --- 完整的聊天机器人UI模板 (纯自然语言交互最终版) ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -38,7 +38,7 @@ HTML_TEMPLATE = """
         .message { max-width: 85%; padding: 0.75rem 1.25rem; border-radius: 18px; line-height: 1.5; white-space: pre-wrap; font-family: 'Menlo', 'Consolas', monospace; font-size: 0.9rem; }
         .user-message { background-color: var(--accent-color); color: white; align-self: flex-end; border-bottom-right-radius: 4px; }
         .bot-message { background-color: var(--bot-bg); color: var(--text-color); align-self: flex-start; border-bottom-left-radius: 4px; }
-        .bot-message-html { padding: 0; background-color: var(--bot-bg); align-self: flex-start; max-width: 100%; width:100%; border-radius: 18px; }
+        .bot-message-html { padding: 0; background-color: transparent; align-self: flex-start; max-width: 100%; width:100%; }
         .chart-container-wrapper { align-self: flex-start; width: 100%; }
         .chart-container { background-color: var(--bot-bg); padding: 1rem; border-radius: 18px; width: 100%; box-sizing: border-box; }
         .typing-indicator { align-self: flex-start; display: flex; gap: 4px; padding: 0.75rem 1.25rem; }
@@ -50,13 +50,10 @@ HTML_TEMPLATE = """
         .chat-input-area textarea { flex-grow: 1; border: 1px solid var(--border-color); border-radius: 8px; padding: 0.75rem; font-size: 1rem; resize: none; font-family: inherit; max-height: 150px; overflow-y: auto; }
         .chat-input-area textarea:focus { outline: none; border-color: var(--accent-color); }
         .chat-input-area button { border: none; background-color: var(--accent-color); color: white; padding: 0.75rem 1rem; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; height: fit-content; }
-        .data-table { border-collapse: collapse; width: 100%; font-family: 'Segoe UI', sans-serif; font-size: 0.9rem; border-radius: 8px; overflow: hidden; }
+        .data-table { border-collapse: collapse; width: 100%; font-family: 'Segoe UI', sans-serif; font-size: 0.9rem; border-radius: 8px; overflow: hidden; background-color: var(--bot-bg); }
         .data-table th, .data-table td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border-color); }
         .data-table th { background-color: #f9fafb; font-weight: 600; }
         .data-table tr:last-child td { border-bottom: none; }
-        /* --- NEW: Style for the chart generation button --- */
-        .chart-prompt-button { align-self: flex-start; background-color: #eef2ff; color: var(--accent-color); border: 1px solid #e0e7ff; padding: 0.5rem 1rem; border-radius: 8px; cursor: pointer; font-family: 'Segoe UI', sans-serif; font-weight: 500; display: flex; align-items: center; gap: 0.5rem; margin-top: -0.5rem; }
-        .chart-prompt-button:hover { background-color: #e0e7ff; }
     </style>
 </head>
 <body>
@@ -81,7 +78,6 @@ HTML_TEMPLATE = """
         const welcomeScreen = document.getElementById('welcome-screen');
 
         let currentConversationId = null;
-        // --- NEW: Temporary storage for pending chart data ---
         let pendingChartData = null;
 
         userInput.addEventListener('input', function () { this.style.height = 'auto'; this.style.height = (this.scrollHeight) + 'px'; });
@@ -101,19 +97,29 @@ HTML_TEMPLATE = """
         function showTypingIndicator() { const indicator = document.createElement('div'); indicator.id = 'typing-indicator'; indicator.classList.add('typing-indicator'); indicator.innerHTML = '<span></span><span></span><span></span>'; chatMessages.appendChild(indicator); chatMessages.scrollTop = chatMessages.scrollHeight; }
         function removeTypingIndicator() { const indicator = document.getElementById('typing-indicator'); if (indicator) indicator.remove(); }
         
-        // --- NEW: Function to draw the chart on demand ---
-        function generatePendingChart(button) {
+        function generatePendingChart() {
             if (pendingChartData) {
                 renderChart(pendingChartData.data, pendingChartData.title, pendingChartData.type);
                 pendingChartData = null; // Clear after use
-                if (button) button.remove(); // Remove the button
             }
         }
 
         async function sendMessage() {
             const question = userInput.value.trim();
             if (!question) return;
-            pendingChartData = null; // Clear any old pending data on new question
+            
+            // --- NEW: Check for chart generation command before sending to server ---
+            const positiveKeywords = ['yes', 'sure', 'ok', 'draw', 'chart', 'plot', '是的', '画', '图', '可以', '生成'];
+            if (pendingChartData && positiveKeywords.some(keyword => question.toLowerCase().includes(keyword))) {
+                addMessage(question, 'user');
+                userInput.value = '';
+                userInput.style.height = 'auto';
+                addMessage("Of course. Here is the chart:", 'bot');
+                generatePendingChart();
+                return; // Stop here, no need to call server
+            }
+
+            pendingChartData = null; // Clear any old pending data if a new, unrelated question is asked
             if (welcomeScreen) welcomeScreen.style.display = 'none';
 
             addMessage(question, 'user');
@@ -135,20 +141,15 @@ HTML_TEMPLATE = """
                 if (data.error) {
                     addMessage(`Error: ${data.details || data.error}`, 'bot');
                 } 
-                // --- NEW: Logic for table with chart option ---
-                else if (data.type === 'table_with_chart_option') {
+                else if (data.type === 'table_with_chart_prompt') {
                     if (data.content) addMessage(data.content, 'bot');
                     if (data.table_html) addHtmlContent(data.table_html, 'bot');
                     
-                    // Store chart data and add the prompt button
+                    // Store chart data and then show the text prompt
                     pendingChartData = { data: data.chart_data, title: data.title, type: data.chart_type };
-                    const button = document.createElement('button');
-                    button.id = 'chart-prompt-btn';
-                    button.className = 'chart-prompt-button';
-                    button.innerHTML = '<i data-lucide="bar-chart-2" style="width:16px; height:16px;"></i> Generate Chart';
-                    button.onclick = () => generatePendingChart(button);
-                    chatMessages.appendChild(button);
-                    lucide.createIcons(); // Re-render icons
+                    if (data.chart_prompt) {
+                        addMessage(data.chart_prompt, 'bot');
+                    }
                 }
                 else if (data.type === 'text' && data.content) {
                     addMessage(data.content, 'bot');
@@ -168,15 +169,22 @@ HTML_TEMPLATE = """
 app = Flask(__name__)
 
 def create_html_table(columns, data_array):
-    """Generates a styled HTML table string."""
     html = "<table class='data-table'><thead><tr>"
     for col in columns:
         html += f"<th>{col['name'].replace('_', ' ').title()}</th>"
     html += "</tr></thead><tbody>"
     for row in data_array:
         html += "<tr>"
-        for cell in row:
-            html += f"<td>{cell}</td>"
+        for i, cell in enumerate(row):
+            # Attempt to format numeric cells for better alignment/reading if needed
+            try:
+                if i == len(row) - 1: # Last column
+                    cell_val = f"{float(cell):,}"
+                else:
+                    cell_val = cell
+            except (ValueError, TypeError):
+                cell_val = cell
+            html += f"<td>{cell_val}</td>"
         html += "</tr>"
     html += "</tbody></table>"
     return html
@@ -256,7 +264,6 @@ def ask():
                             is_numeric = any(t in data_col_type for t in ['long', 'int', 'double', 'float', 'decimal'])
                             
                             if is_numeric:
-                                # --- MODIFICATION: Prepare data for both table and optional chart ---
                                 html_table = create_html_table(columns, data_array)
                                 
                                 labels = [" ".join(map(str, row[:-1])) for row in data_array]
@@ -266,12 +273,12 @@ def ask():
                                 chart_data = {'labels': labels, 'datasets': [{'label': data_col['name'].replace('_', ' ').title(), 'data': data_points}]}
                                 
                                 base_response.update({
-                                    'type': 'table_with_chart_option', # New response type
+                                    'type': 'table_with_chart_prompt',
                                     'title': f"Chart of {chart_data['datasets'][0]['label']}",
                                     'content': "\n\n".join(text_parts),
                                     'table_html': html_table,
-                                    'chart_data': chart_data, # Send chart data to be stored by frontend
-                                    'chart_type': chart_type
+                                    'chart_data': chart_data,
+                                    'chart_prompt': "I have summarized the data in the table above. Would you like me to generate a chart for it?"
                                 })
                                 final_response_generated = True
                                 break 
