@@ -92,7 +92,6 @@ HTML_TEMPLATE = """
         function askSample(element) { const question = element.querySelector('span').innerText; userInput.value = question; userInput.dispatchEvent(new Event('input', { bubbles: true })); sendMessage(); }
         function handleEnter(event) { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage(); } }
         
-        // MODIFIED: Added chartType parameter
         function renderChart(chartData, title, chartType) { 
             const wrapper = document.createElement('div'); 
             wrapper.classList.add('chart-container-wrapper'); 
@@ -103,7 +102,6 @@ HTML_TEMPLATE = """
             wrapper.appendChild(chartContainer); 
             chatMessages.appendChild(wrapper); 
 
-            // MODIFIED: Use dynamic chartType, default to 'line'
             new Chart(canvas, { 
                 type: chartType || 'line', 
                 data: chartData, 
@@ -169,10 +167,8 @@ HTML_TEMPLATE = """
                     addMessage(`Error: ${data.details || data.error}`, 'bot');
                 } else if (data.type === 'chart_with_text') {
                     if (data.content) { addMessage(data.content, 'bot'); }
-                    // MODIFIED: Pass chart_type to renderChart
                     renderChart(data.data, data.title, data.chart_type);
                 } else if (data.type === 'chart') {
-                    // MODIFIED: Pass chart_type to renderChart
                     renderChart(data.data, data.title, data.chart_type);
                 } else if (data.type === 'text' && data.content) {
                     addMessage(data.content, 'bot');
@@ -269,7 +265,6 @@ def ask():
                             col1_type = columns[0]['type_name'].lower()
                             col2_type = columns[1]['type_name'].lower()
                             
-                            # MODIFIED: Step 1 - Detect column type
                             is_numeric = ('long' in col2_type or 'int' in col2_type or 'double' in col2_type or 'float' in col2_type or 'decimal' in col2_type)
                             is_time = ('date' in col1_type or 'timestamp' in col1_type)
                             is_string = ('string' in col1_type)
@@ -282,7 +277,6 @@ def ask():
                                 except (ValueError, TypeError):
                                     continue
                                 
-                                # MODIFIED: Step 2 - Pick chart type
                                 chart_type = 'line' if is_time else 'bar'
 
                                 chart_data = {
@@ -292,12 +286,11 @@ def ask():
                                         'data': data_points,
                                         'fill': False,
                                         'borderColor': '#6366f1',
-                                        'backgroundColor': '#6366f1', # Added for bar charts
+                                        'backgroundColor': '#6366f1',
                                         'tension': 0.1
                                     }]
                                 }
                                 
-                                # MODIFIED: Step 3 - Send chart_type to frontend
                                 if text_parts:
                                     base_response.update({
                                         'type': 'chart_with_text',
@@ -337,4 +330,3 @@ def ask():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5001, debug=True)
-```
